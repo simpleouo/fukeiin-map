@@ -11,6 +11,8 @@
 - Google Maps 導航、查營業時間
 - 收集紀錄存在瀏覽器裡，可匯出／匯入備份檔
 
+完整的規劃與製作紀錄見 [docs/製作過程.md](docs/製作過程.md)。
+
 ## 資料來源
 
 - 風景印資料：[日本郵便「風景印」](https://www.post.japanpost.jp/enjoy/culture/stamp/fuke/)
