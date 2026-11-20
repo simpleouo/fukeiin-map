@@ -1,0 +1,3 @@
+raw/*
+!raw/geocode_cache.json
+__pycache__/

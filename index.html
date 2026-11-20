@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#c8102e">
+<title>風景印地圖・東京</title>
+<link rel="stylesheet" href="vendor/maplibre-gl.css">
+<style>
+/* Layout: full-screen map, floating top bar, bottom sheet for details / list */
+:root {
+  --red: #c8102e;        /* 郵便 red: not yet collected */
+  --red-ink: #fff;
+  --green: #2f7d57;      /* collected */
+  --amber: #c77700;      /* ending soon / new design */
+  --bg: #ffffff;
+  --panel: #ffffff;
+  --fg: #1d1f24;
+  --muted: #646a75;
+  --line: #e3e5ea;
+  --chip: #f2f3f6;
+  --shadow: 0 4px 20px rgba(20, 24, 33, .16);
+  --font: -apple-system, BlinkMacSystemFont, "PingFang TC", "Hiragino Sans", "Noto Sans TC", "Noto Sans JP", "Microsoft JhengHei", sans-serif;
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #15171c; --panel: #1f2229; --fg: #eceef2; --muted: #a0a6b2; --line: #343842; --chip: #2a2e36;
+          --red: #e8384f; --green: #45a877; --amber: #e69a2e; --shadow: 0 4px 20px rgba(0,0,0,.5); color-scheme: dark; }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { font: 15px/1.5 var(--font); background: var(--bg); color: var(--fg); overflow: hidden; }
+button, input, select { font: inherit; color: inherit; }
+#map { position: fixed; inset: 0; }
+
+/* Top bar */
+.top { position: fixed; z-index: 5; top: 0; left: 0; right: 0;
+  padding: calc(var(--safe-t) + 10px) max(12px, var(--safe-r)) 0 max(12px, var(--safe-l));
+  display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.top > * { pointer-events: auto; }
+.searchrow { display: flex; gap: 8px; }
+.search { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; background: var(--panel);
+  border-radius: 12px; box-shadow: var(--shadow); padding: 0 12px; height: 44px; }
+.search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; height: 100%; }
+.search .stamp { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--red); color: var(--red);
+  display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none; }
+.iconbtn { width: 44px; height: 44px; border-radius: 12px; border: 0; background: var(--panel); box-shadow: var(--shadow);
+  display: grid; place-items: center; cursor: pointer; flex: none; }
+.chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 4px; }
+.chips::-webkit-scrollbar { display: none; }
+.chip { flex: none; border: 0; border-radius: 999px; padding: 6px 12px; background: var(--panel); box-shadow: var(--shadow);
+  cursor: pointer; white-space: nowrap; font-size: 14px; display: inline-flex; align-items: center; gap: 6px; }
+.chip[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.red { background: var(--red); } .dot.green { background: var(--green); } .dot.amber { background: var(--amber); }
+select.chip { appearance: none; padding-right: 26px;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 14px) 55%, calc(100% - 9px) 55%; background-size: 5px 5px; background-repeat: no-repeat; }
+.counter { font-size: 13px; color: var(--muted); background: var(--panel); box-shadow: var(--shadow); border-radius: 999px;
+  padding: 4px 10px; align-self: flex-start; font-variant-numeric: tabular-nums; }
+
+/* Floating buttons */
+.fabs { position: fixed; z-index: 4; right: max(12px, var(--safe-r)); bottom: calc(var(--safe-b) + 24px);
+  display: flex; flex-direction: column; gap: 10px; transition: bottom .25s; }
+body.sheet-open .fabs { bottom: calc(var(--sheet-h, 50vh) + 12px); }
+.fab { width: 48px; height: 48px; border-radius: 50%; border: 0; background: var(--panel); box-shadow: var(--shadow);
+  display: grid; place-items: center; cursor: pointer; }
+.fab.on { color: #2a7de1; }
+.listbtn { position: fixed; z-index: 4; left: 50%; transform: translateX(-50%); bottom: calc(var(--safe-b) + 24px);
+  border: 0; border-radius: 999px; padding: 12px 20px; background: var(--fg); color: var(--bg); box-shadow: var(--shadow);
+  font-weight: 600; cursor: pointer; }
+body.sheet-open .listbtn { display: none; }
+
+/* Bottom sheet */
+.sheet { position: fixed; z-index: 6; left: 0; right: 0; bottom: 0; max-height: 72vh; background: var(--panel);
+  border-radius: 18px 18px 0 0; box-shadow: var(--shadow); display: flex; flex-direction: column;
+  transform: translateY(105%); transition: transform .25s ease; }
+body.sheet-open .sheet { transform: none; }
+.sheet-head { display: flex; align-items: center; gap: 8px; padding: 6px max(16px, var(--safe-r)) 4px max(16px, var(--safe-l)); }
+.grab { width: 40px; height: 5px; border-radius: 3px; background: var(--line); margin: 8px auto 0; }
+.sheet-title { flex: 1; min-width: 0; font-weight: 700; font-size: 17px; }
+.close { width: 36px; height: 36px; border-radius: 50%; border: 0; background: var(--chip); cursor: pointer; font-size: 18px; }
+.sheet-body { overflow-y: auto; padding: 4px max(16px, var(--safe-r)) calc(var(--safe-b) + 20px) max(16px, var(--safe-l));
+  overscroll-behavior: contain; }
+@media (min-width: 760px) {
+  .sheet { left: auto; right: max(16px, var(--safe-r)); top: calc(var(--safe-t) + 16px); bottom: 16px; width: 400px;
+    max-height: none; border-radius: 16px; transform: translateX(120%); }
+  body.sheet-open .fabs { bottom: 24px; right: 432px; }
+}
+
+/* Office detail */
+.jp { font-size: 22px; font-weight: 700; line-height: 1.3; margin: 0; }
+.area { color: var(--muted); font-size: 14px; }
+.addr { font-size: 14px; color: var(--muted); margin: 6px 0 0; user-select: text; }
+.warn { margin: 10px 0 0; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--amber) 14%, transparent);
+  color: var(--fg); font-size: 14px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 4px; }
+.btn { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; background: var(--panel); cursor: pointer;
+  text-decoration: none; color: var(--fg); font-size: 14px; display: inline-flex; align-items: center; gap: 6px; }
+.design { border-top: 1px solid var(--line); padding: 14px 0 6px; margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.design-head { display: flex; align-items: center; gap: 10px; }
+.postmark { width: 54px; height: 54px; border-radius: 50%; border: 2.5px solid var(--red); color: var(--red); flex: none;
+  display: grid; place-items: center; text-align: center; font-size: 11px; line-height: 1.15; font-weight: 700; font-variant-numeric: tabular-nums; }
+.postmark.done { border-color: var(--green); color: var(--green); }
+.design-meta { flex: 1; min-width: 0; font-size: 14px; }
+.desc { font-size: 15px; margin: 0; }
+.desc-label { font-size: 12px; color: var(--muted); letter-spacing: .04em; }
+.collect { border: 0; border-radius: 12px; padding: 12px; font-weight: 700; cursor: pointer; background: var(--red); color: var(--red-ink); width: 100%; }
+.collect.done { background: color-mix(in srgb, var(--green) 16%, transparent); color: var(--green); }
+.collected-on { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.collected-on input { border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; background: var(--panel); }
+details.note { font-size: 13px; color: var(--muted); }
+details.note summary { cursor: pointer; }
+.hint { font-size: 13px; color: var(--muted); margin: 14px 0 0; }
+
+/* List */
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { border-bottom: 1px solid var(--line); }
+.list button { width: 100%; text-align: left; border: 0; background: transparent; padding: 10px 0; display: flex; gap: 10px;
+  align-items: center; cursor: pointer; }
+.list .name { flex: 1; min-width: 0; }
+.list .name b { display: block; font-weight: 600; }
+.list .name small { color: var(--muted); }
+.list .dist { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 14px; }
+.list-note { font-size: 13px; color: var(--muted); margin: 0 0 6px; }
+
+/* Settings */
+.settings p { margin: 0 0 10px; }
+.settings .btn { margin: 0 8px 8px 0; }
+.toast { position: fixed; z-index: 10; left: 50%; top: calc(var(--safe-t) + 120px); transform: translateX(-50%);
+  background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 10px; font-size: 14px; opacity: 0;
+  transition: opacity .2s; pointer-events: none; }
+.toast.show { opacity: 1; }
+.maplibregl-ctrl-attrib { font-size: 10px; }
+:focus-visible { outline: 2px solid #2a7de1; outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .sheet, .fabs { transition: none; } }
+</style>
+</head>
+<body>
+<div id="map" aria-label="風景印地圖"></div>
+
+<div class="top">
+  <div class="searchrow">
+    <label class="search">
+      <span class="stamp" aria-hidden="true">〒</span>
+      <input id="q" type="search" placeholder="搜尋郵局名、地名（例：浅草、上野）" autocomplete="off">
+    </label>
+    <button class="iconbtn" id="settingsBtn" aria-label="設定與備份">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    </button>
+  </div>
+  <div class="chips" role="toolbar" aria-label="篩選">
+    <button class="chip" data-filter="todo" aria-pressed="true"><span class="dot red"></span>未收集</button>
+    <button class="chip" data-filter="done" aria-pressed="false"><span class="dot green"></span>已收集</button>
+    <button class="chip" data-filter="all" aria-pressed="false">全部</button>
+    <button class="chip" data-filter="soon" aria-pressed="false"><span class="dot amber"></span>即將廢止／新圖案</button>
+    <select class="chip" id="area" aria-label="地區"><option value="">全部地區</option></select>
+  </div>
+  <div class="counter" id="counter"></div>
+</div>
+
+<div class="fabs">
+  <button class="fab" id="locateBtn" aria-label="顯示我的位置">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+  </button>
+</div>
+<button class="listbtn" id="listBtn">附近清單</button>
+
+<section class="sheet" id="sheet" aria-live="polite">
+  <div class="grab" aria-hidden="true"></div>
+  <div class="sheet-head">
+    <div class="sheet-title" id="sheetTitle"></div>
+    <button class="close" id="closeBtn" aria-label="關閉">✕</button>
+  </div>
+  <div class="sheet-body" id="sheetBody"></div>
+</section>
+<div class="toast" id="toast" role="status"></div>
+<input type="file" id="importFile" accept="application/json,.json" hidden>
+
+<script src="vendor/maplibre-gl.js"></script>
+<script>
+"use strict";
+const STORE_KEY = "fukeiin.collected.v1";   // { [designId]: "YYYY-MM-DD" }
+const SOON_DAYS = 45;
+const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+let DATA = null, offices = [], byId = new Map();
+let collected = load();
+let filter = "todo", area = "", query = "", me = null, openId = null;
+
+function load() { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; } }
+function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(collected)); } catch { toast("無法儲存，請確認瀏覽器沒有開啟無痕模式"); } }
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("show"), 2200); }
+
+// A design is "current" unless its abolish date has passed; an upcoming design counts once it has started.
+const daysUntil = (d) => d ? Math.round((new Date(d) - new Date(today)) / 864e5) : null;
+const currentDesigns = (o) => o.designs.filter((d) => !(d.endsOn && d.endsOn < today));
+function status(o) {
+  const ds = currentDesigns(o);
+  const got = ds.filter((d) => collected[d.id]).length;
+  return { total: ds.length, got, done: ds.length > 0 && got === ds.length, partial: got > 0 && got < ds.length };
+}
+function isSoon(o) {
+  return currentDesigns(o).some((d) => {
+    const e = daysUntil(d.endsOn), s = daysUntil(d.startsOn);
+    return (e !== null && e >= 0 && e <= SOON_DAYS) || (s !== null && s >= -14 && s <= SOON_DAYS);
+  });
+}
+function visible(o) {
+  const st = status(o);
+  if (filter === "todo" && st.done) return false;
+  if (filter === "done" && st.got === 0) return false;
+  if (filter === "soon" && !isSoon(o)) return false;
+  if (area && o.area !== area) return false;
+  if (query && !(o.name + o.address + (o.designs.map((d) => d.desc).join(""))).includes(query)) return false;
+  return true;
+}
+function geojson() {
+  return { type: "FeatureCollection", features: offices.filter(visible).map((o) => {
+    const st = status(o);
+    return { type: "Feature", id: o.id, geometry: { type: "Point", coordinates: [o.lng, o.lat] },
+      properties: { id: o.id, s: st.done ? "done" : st.partial ? "partial" : "todo", soon: isSoon(o) ? 1 : 0, name: o.name.replace(/郵便局$/, "") } };
+  }) };
+}
+function refresh() {
+  const src = map.getSource("offices");
+  if (src) src.setData(geojson());
+  const all = offices.filter((o) => (!area || o.area === area));
+  const got = all.filter((o) => status(o).done).length;
+  $("#counter").textContent = `${area || "東京都"}：已收集 ${got} / ${all.length} 間郵局`;
+  if (openId === "list") showList(); else if (openId) showOffice(openId);
+}
+
+// ---------- Map ----------
+const map = new maplibregl.Map({
+  container: "map",
+  style: "https://tiles.openfreemap.org/styles/liberty",
+  center: [139.75, 35.69], zoom: 11, minZoom: 4, maxZoom: 18, attributionControl: { compact: true },
+});
+const geo = new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, showAccuracyCircle: true });
+map.addControl(geo, "bottom-left");
+document.querySelector(".maplibregl-ctrl-geolocate")?.closest(".maplibregl-ctrl-group")?.setAttribute("hidden", "");
+geo.on("geolocate", (e) => { me = [e.coords.longitude, e.coords.latitude]; $("#locateBtn").classList.add("on"); if (openId === "list") showList(); });
+geo.on("error", (e) => toast(e.code === 1 ? "沒有定位權限：請到瀏覽器設定允許此網站使用位置" : "暫時無法取得位置"));
+$("#locateBtn").onclick = () => geo.trigger();
+
+map.on("load", async () => {
+  // Show Japanese place names (they match the signs you'll see on the street)
+  for (const l of map.getStyle().layers) {
+    if (l.type === "symbol" && map.getLayoutProperty(l.id, "text-field"))
+      map.setLayoutProperty(l.id, "text-field", ["coalesce", ["get", "name:ja"], ["get", "name"]]);
+  }
+  map.addSource("offices", { type: "geojson", data: geojson() });
+  const color = ["match", ["get", "s"], "done", cssVar("--green"), cssVar("--red")];
+  map.addLayer({ id: "soon-ring", type: "circle", source: "offices", filter: ["==", ["get", "soon"], 1],
+    paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 5, 11, 7, 13, 10, 16, 15], "circle-color": "transparent",
+      "circle-stroke-color": cssVar("--amber"), "circle-stroke-width": 3 } });
+  map.addLayer({ id: "offices", type: "circle", source: "offices",
+    paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 2.5, 11, 4, 13, 6.5, 16, 10],
+      "circle-color": ["case", ["==", ["get", "s"], "partial"], "#ffffff", color],
+      "circle-stroke-color": color, "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 8, 0.5, 12, 1.5, 14, 2.5] } });
+  map.addLayer({ id: "office-labels", type: "symbol", source: "offices", minzoom: 13.5,
+    layout: { "text-field": ["get", "name"], "text-size": 12, "text-offset": [0, 1.3], "text-anchor": "top", "text-optional": true },
+    paint: { "text-color": "#1d1f24", "text-halo-color": "#ffffff", "text-halo-width": 1.5 } });
+  map.on("click", "offices", (e) => openOffice(e.features[0].properties.id));
+  map.on("mouseenter", "offices", () => map.getCanvas().style.cursor = "pointer");
+  map.on("mouseleave", "offices", () => map.getCanvas().style.cursor = "");
+});
+function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+// ---------- Sheet ----------
+function openSheet(title, html) {
+  $("#sheetTitle").innerHTML = title; $("#sheetBody").innerHTML = html;
+  document.body.classList.add("sheet-open");
+  requestAnimationFrame(() => document.body.style.setProperty("--sheet-h", $("#sheet").offsetHeight + "px"));
+}
+function closeSheet() { document.body.classList.remove("sheet-open"); openId = null; }
+$("#closeBtn").onclick = closeSheet;
+
+function openOffice(id) {
+  openId = id; const o = byId.get(id); showOffice(id);
+  const pad = window.innerWidth >= 760 ? { right: 420 } : { bottom: $("#sheet").offsetHeight };
+  map.easeTo({ center: [o.lng, o.lat], zoom: Math.max(map.getZoom(), 14), padding: pad, duration: 500 });
+}
+function fmtDate(d) { return d ? d.replace(/^(\d{4})-(\d{2})-(\d{2})$/, (_, y, m, dd) => `${y}/${+m}/${+dd}`) : "—"; }
+function showOffice(id) {
+  const o = byId.get(id); const st = status(o);
+  const nav = `https://www.google.com/maps/dir/?api=1&destination=${o.lat},${o.lng}&travelmode=walking`;
+  const gsearch = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(o.name + " " + o.address)}`;
+  const designs = o.designs.map((d) => {
+    const ended = d.endsOn && d.endsOn < today, got = collected[d.id];
+    const e = daysUntil(d.endsOn), s = daysUntil(d.startsOn);
+    const warn = ended ? `已於 ${fmtDate(d.endsOn)} 廢止`
+      : e !== null ? `⚠️ 這款將於 ${fmtDate(d.endsOn)} 廢止（還有 ${e} 天）`
+      : s !== null && s > 0 ? `🆕 新圖案 ${fmtDate(d.startsOn)} 開始使用（${s} 天後）`
+      : s !== null && s > -14 ? `🆕 新圖案，${fmtDate(d.startsOn)} 開始使用` : "";
+    return `<div class="design">
+      <div class="design-head">
+        <div class="postmark ${got ? "done" : ""}" aria-hidden="true">${got ? "已收集" : "風景印"}<br>${esc((d.start || "").slice(0, 4))}</div>
+        <div class="design-meta">使用開始：${fmtDate(d.start)}${d.designer ? `<br>圖案作者：${esc(d.designer)}` : ""}</div>
+      </div>
+      ${warn ? `<div class="warn">${warn}</div>` : ""}
+      <div><div class="desc-label">圖案說明（日文原文）</div><p class="desc">${d.desc ? esc(d.desc) : "官網未提供說明"}</p></div>
+      ${d.note ? `<details class="note"><summary>官網備註</summary>${esc(d.note)}</details>` : ""}
+      <a class="btn" href="${d.url}" target="_blank" rel="noopener">在日本郵便官網看圖案 ↗</a>
+      ${ended ? "" : got
+        ? `<button class="collect done" data-toggle="${d.id}">✓ 已收集（點一下取消）</button>
+           <label class="collected-on">收集日期 <input type="date" data-date="${d.id}" value="${got}" max="${today}"></label>`
+        : `<button class="collect" data-toggle="${d.id}">標記為已收集</button>`}
+    </div>`;
+  }).join("");
+  const multi = st.total > 1 ? `<div class="warn">這間郵局有 ${st.total} 款風景印，已收集 ${st.got} 款</div>` : "";
+  openSheet(`<span class="area">${esc(o.area || "")}</span>`, `
+    <h2 class="jp">${esc(o.name)}</h2>
+    <p class="addr">〒${esc(o.zip || "")} ${esc(o.address)}</p>
+    ${o.approx ? `<div class="warn">📍 地圖位置為大約位置，請以地址為準</div>` : ""}
+    ${multi}
+    <div class="actions">
+      <a class="btn" href="${nav}" target="_blank" rel="noopener">🧭 導航</a>
+      <a class="btn" href="${gsearch}" target="_blank" rel="noopener">🕘 查營業時間</a>
+    </div>
+    ${designs}
+    <p class="hint">風景印需在郵便窗口的營業時間內押印，很多小郵局週末不營業，出發前請先確認時間。</p>`);
+}
+$("#sheetBody").addEventListener("click", (e) => {
+  const t = e.target.closest("[data-toggle]"); if (t) {
+    const id = t.dataset.toggle;
+    if (collected[id]) { delete collected[id]; toast("已取消收集"); } else { collected[id] = today; toast("已收集 ✓"); }
+    save(); refresh(); return;
+  }
+  const li = e.target.closest("[data-office]"); if (li) openOffice(+li.dataset.office);
+});
+$("#sheetBody").addEventListener("change", (e) => {
+  const t = e.target.closest("[data-date]"); if (t && t.value) { collected[t.dataset.date] = t.value; save(); toast("已更新日期"); }
+});
+
+// ---------- Nearby list ----------
+function dist(a, b) {
+  const R = 6371e3, r = Math.PI / 180, dLat = (b[1] - a[1]) * r, dLng = (b[0] - a[0]) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a[1] * r) * Math.cos(b[1] * r) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+const fmtDist = (m) => m < 1000 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`;
+function showList() {
+  openId = "list";
+  const from = me || map.getCenter().toArray();
+  const items = offices.filter(visible).map((o) => ({ o, m: dist(from, [o.lng, o.lat]) })).sort((a, b) => a.m - b.m).slice(0, 40);
+  openSheet("附近清單", `
+    <p class="list-note">${me ? "依離你的距離排序" : "依離地圖中心的距離排序（按 📍 可改用你的位置）"}・最多顯示 40 間</p>
+    <ul class="list">${items.map(({ o, m }) => { const st = status(o); return `<li><button data-office="${o.id}">
+      <span class="dot ${st.done ? "green" : isSoon(o) ? "amber" : "red"}"></span>
+      <span class="name"><b>${esc(o.name)}</b><small>${esc(o.area || "")}${st.total > 1 ? `・${st.got}/${st.total} 款` : ""}</small></span>
+      <span class="dist">${fmtDist(m)}</span></button></li>`; }).join("") || "<li class='list-note'>沒有符合條件的郵局</li>"}</ul>`);
+}
+$("#listBtn").onclick = showList;
+
+// ---------- Filters ----------
+document.querySelectorAll("[data-filter]").forEach((b) => b.onclick = () => {
+  filter = b.dataset.filter;
+  document.querySelectorAll("[data-filter]").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  refresh();
+});
+$("#area").onchange = (e) => {
+  area = e.target.value; refresh();
+  const sel = offices.filter((o) => !area || o.area === area);
+  if (sel.length) {
+    const b = sel.reduce((bb, o) => bb.extend([o.lng, o.lat]), new maplibregl.LngLatBounds([sel[0].lng, sel[0].lat], [sel[0].lng, sel[0].lat]));
+    map.fitBounds(b, { padding: 60, maxZoom: 14, duration: 600 });
+  }
+};
+let qt; $("#q").oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { query = e.target.value.trim(); refresh(); }, 200); };
+
+// ---------- Settings & backup ----------
+$("#settingsBtn").onclick = () => {
+  openId = null;
+  const n = Object.keys(collected).length;
+  openSheet("設定與備份", `<div class="settings">
+    <p>已收集 <b>${n}</b> 款風景印。紀錄存在這支手機的瀏覽器裡，換手機或在電腦上看之前，請先匯出備份檔，再到另一台裝置匯入。</p>
+    <button class="btn" id="exportBtn">⬇︎ 匯出備份</button>
+    <button class="btn" id="importBtn">⬆︎ 匯入備份</button>
+    <p class="hint">資料來源：日本郵便「風景印」頁面，更新於 ${esc(DATA.updated)}。風景印會新增或廢止，實際狀況以官網為準。<br>
+      <a href="https://www.post.japanpost.jp/enjoy/culture/stamp/fuke/" target="_blank" rel="noopener">日本郵便 風景印官網 ↗</a></p>
+  </div>`);
+  $("#exportBtn").onclick = () => {
+    const blob = new Blob([JSON.stringify({ app: "fukeiin-map", exported: new Date().toISOString(), collected }, null, 1)], { type: "application/json" });
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `風景印收集-${today}.json` });
+    document.body.append(a); a.click(); a.remove();
+  };
+  $("#importBtn").onclick = () => $("#importFile").click();
+};
+$("#importFile").onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const j = JSON.parse(await f.text()); const c = j.collected || j;
+    let n = 0; for (const [k, v] of Object.entries(c)) if (/^\d+$/.test(k) && /^\d{4}-\d{2}-\d{2}$/.test(v)) { if (!collected[k]) n++; collected[k] = v; }
+    save(); refresh(); toast(`已匯入，新增 ${n} 款`);
+  } catch { toast("這個檔案無法讀取，請選擇從這裡匯出的備份檔"); }
+  e.target.value = "";
+};
+
+// ---------- Boot ----------
+fetch("data/tokyo.json").then((r) => r.json()).then((d) => {
+  DATA = d; offices = d.offices; offices.forEach((o) => byId.set(o.id, o));
+  const areas = [...new Set(offices.map((o) => o.area).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ja"));
+  $("#area").insertAdjacentHTML("beforeend", areas.map((a) => `<option>${esc(a)}</option>`).join(""));
+  refresh();
+}).catch(() => toast("資料載入失敗，請重新整理"));
+</script>
+</body>
+</html>
